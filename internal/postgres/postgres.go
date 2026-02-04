@@ -10,9 +10,13 @@ import (
 )
 
 const (
+	insertTaskQuery = `INSERT INTO tasks
+(name, type, status, payload, created_at, updated_at, attempts, locked_at, last_error)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
+
 	storeTaskQuery = "INSERT INTO tasks (name, type, payload) VALUES ($1, $2, $3) RETURNING id"
 
-	getTaskQuery = `SELECT id, name, type, status, payload, created_at, updated_at, locked_at, last_error
+	getTaskQuery = `SELECT id, name, type, status, payload, created_at, updated_at, attempts, locked_at, last_error
 FROM tasks
 WHERE id = $1`
 
@@ -48,7 +52,7 @@ WHERE task_id = $1
 ORDER BY created_at
 LIMIT 10`
 
-	dequeueTaskQuery = `WITH next AS (
+	dequeueTasksQuery = `WITH next AS (
 SELECT id
 FROM tasks
 WHERE status = 'queued' AND locked_at IS NULL
@@ -72,14 +76,13 @@ RETURNING t.*;`
 		updated_at = now()
 	WHERE status = 'running'
 		AND locked_at < now() - interval '10 minutes'
-		AND attempts < 5;
+		AND attempts < 5
 	RETURNING id, status, updated_at
 )
 INSERT INTO task_events (task_id, status, created_at)
 SELECT id, status, updated_at
 FROM reaped
-RETURNING task_id
-`
+RETURNING task_id`
 
 	reaperUpdateStatusFailedQuery = `WITH reaped AS (
 	UPDATE tasks
@@ -89,14 +92,13 @@ RETURNING task_id
 		updated_at = now()
 	WHERE status = 'running'
 		AND locked_at < now() - interval '10 minutes'
-		AND attempts >= 5;
+		AND attempts >= 5
 	RETURNING id, status, updated_at
 )
 INSERT INTO task_events (task_id, status, created_at)
 SELECT id, status, updated_at
 FROM reaped
-RETURNING task_id
-`
+RETURNING task_id`
 )
 
 type DB struct {
@@ -111,6 +113,18 @@ type StoreTaskReq struct {
 	Name    string
 	Type    string
 	Payload map[string]string
+}
+
+func (db *DB) insertTask(ctx context.Context, task tasks.Task) (int64, error) {
+	b, err := json.Marshal(task.Payload)
+	if err != nil {
+		return 0, err
+	}
+
+	var id int64
+	err = db.pool.QueryRow(ctx, insertTaskQuery, task.Name, task.Type, task.Status,
+		b, task.CreatedAt, task.UpdatedAt, task.Attempts, task.LockedAt, task.LastError).Scan(&id)
+	return id, err
 }
 
 func (db *DB) StoreTask(ctx context.Context, task StoreTaskReq) (int64, error) {
@@ -168,8 +182,8 @@ func (db *DB) GetTaskEvents(ctx context.Context, taskID int64) ([]tasks.Event, e
 	return pgx.CollectRows(rows, pgx.RowToStructByName[tasks.Event])
 }
 
-func (db *DB) DequeueTask(ctx context.Context, batchSize int) ([]tasks.Task, error) {
-	rows, err := db.pool.Query(ctx, dequeueTaskQuery, batchSize)
+func (db *DB) DequeueTasks(ctx context.Context, batchSize int) ([]tasks.Task, error) {
+	rows, err := db.pool.Query(ctx, dequeueTasksQuery, batchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +201,7 @@ func (db *DB) ReaperUpdateStatusQueued(ctx context.Context) ([]int64, error) {
 }
 
 func (db *DB) ReaperUpdateStatusFailed(ctx context.Context) ([]int64, error) {
-	rows, err := db.pool.Query(ctx, reaperUpdateStatusQueuedQuery)
+	rows, err := db.pool.Query(ctx, reaperUpdateStatusFailedQuery)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"dns/internal/tasks"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -109,6 +110,172 @@ func TestStoreAndGetTaskEvents(t *testing.T) {
 	events, err := db.GetTaskEvents(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, 5, len(events))
+}
+
+func TestDequeueTask(t *testing.T) {
+	ctx := context.Background()
+	pool := runPostgresAndConnect(t, ctx)
+
+	db := New(pool)
+
+	var taskIDs []int64
+	for range 10 {
+		task := StoreTaskReq{
+			Name: "some task",
+			Type: "send_email",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+		}
+		id, err := db.StoreTask(ctx, task)
+		require.NoError(t, err)
+		taskIDs = append(taskIDs, id)
+	}
+
+	tasks, err := db.DequeueTasks(ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(tasks))
+
+	var deqTaskIDs []int64
+	for _, task := range tasks {
+		require.Equal(t, task.Status, "running")
+		require.WithinDuration(t, time.Now(), *task.LockedAt, 100*time.Millisecond)
+		require.WithinDuration(t, time.Now(), task.UpdatedAt, 100*time.Millisecond)
+		deqTaskIDs = append(deqTaskIDs, task.ID)
+	}
+
+	tasks, err = db.DequeueTasks(ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(tasks))
+	for _, task := range tasks {
+		// Ensure we won't fetch tasks already marked as running.
+		require.NotContains(t, deqTaskIDs, task.ID)
+		deqTaskIDs = append(deqTaskIDs, task.ID)
+	}
+
+	tasks, err = db.DequeueTasks(ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(tasks))
+	for _, task := range tasks {
+		// Ensure we won't fetch tasks already marked as running.
+		require.NotContains(t, deqTaskIDs, task.ID)
+	}
+}
+
+func TestReaperUpdateStatusQueued(t *testing.T) {
+	ctx := context.Background()
+	pool := runPostgresAndConnect(t, ctx)
+
+	db := New(pool)
+
+	lockedAt := time.Now().Add(-time.Hour)
+	for range 10 {
+		task := tasks.Task{
+			Name:   "some task",
+			Type:   "send_email",
+			Status: "running",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+			CreatedAt: time.Now().Add(-time.Hour),
+			UpdatedAt: time.Now().Add(-time.Hour),
+			Attempts:  3,
+			LockedAt:  &lockedAt,
+			LastError: nil,
+		}
+		_, err := db.insertTask(ctx, task)
+		require.NoError(t, err)
+	}
+
+	for range 10 {
+		task := tasks.Task{
+			Name:   "some task",
+			Type:   "send_email",
+			Status: "queued",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+		}
+		_, err := db.insertTask(ctx, task)
+		require.NoError(t, err)
+	}
+
+	affectedIDs, err := db.ReaperUpdateStatusQueued(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 10, len(affectedIDs))
+
+	task, err := db.GetTask(ctx, affectedIDs[0])
+	require.NoError(t, err)
+
+	require.Equal(t, "queued", task.Status)
+	require.Nil(t, task.LockedAt)
+	require.Equal(t, int32(4), task.Attempts)
+	require.WithinDuration(t, time.Now(), task.UpdatedAt, 100*time.Millisecond)
+
+	events, err := db.GetTaskEvents(ctx, affectedIDs[0])
+	require.NoError(t, err)
+	require.Equal(t, "queued", events[0].Status)
+}
+
+func TestReaperUpdateStatusFailed(t *testing.T) {
+	ctx := context.Background()
+	pool := runPostgresAndConnect(t, ctx)
+
+	db := New(pool)
+
+	lockedAt := time.Now().Add(-time.Hour)
+	for range 10 {
+		task := tasks.Task{
+			Name:   "some task",
+			Type:   "send_email",
+			Status: "running",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+			CreatedAt: time.Now().Add(-time.Hour),
+			UpdatedAt: time.Now().Add(-time.Hour),
+			Attempts:  5,
+			LockedAt:  &lockedAt,
+			LastError: nil,
+		}
+		_, err := db.insertTask(ctx, task)
+		require.NoError(t, err)
+	}
+
+	for range 10 {
+		task := tasks.Task{
+			Name:   "some task",
+			Type:   "send_email",
+			Status: "queued",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+		}
+		_, err := db.insertTask(ctx, task)
+		require.NoError(t, err)
+	}
+
+	affectedIDs, err := db.ReaperUpdateStatusFailed(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 10, len(affectedIDs))
+
+	task, err := db.GetTask(ctx, affectedIDs[0])
+	require.NoError(t, err)
+
+	require.Equal(t, "failed", task.Status)
+	require.Nil(t, task.LockedAt)
+	require.Equal(t, int32(5), task.Attempts)
+	require.Equal(t, "max attempts exceeded", *task.LastError)
+	require.WithinDuration(t, time.Now(), task.UpdatedAt, 100*time.Millisecond)
+
+	events, err := db.GetTaskEvents(ctx, affectedIDs[0])
+	require.NoError(t, err)
+	require.Equal(t, "failed", events[0].Status)
 }
 
 func runPostgresAndConnect(t *testing.T, ctx context.Context) *pgxpool.Pool {
