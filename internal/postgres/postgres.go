@@ -2,11 +2,12 @@ package postgres
 
 import (
 	"context"
-	"dns/internal/tasks"
 	"encoding/json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"dns/internal/tasks"
 )
 
 const (
@@ -138,7 +139,7 @@ func (db *DB) StoreTask(ctx context.Context, task StoreTaskReq) (int64, error) {
 	return id, err
 }
 
-func (db *DB) GetTask(ctx context.Context, id int64) (tasks.Task, error) {
+func (db *DB) getTask(ctx context.Context, id int64) (tasks.Task, error) {
 	rows, err := db.pool.Query(ctx, getTaskQuery, id)
 	if err != nil {
 		return tasks.Task{}, err
@@ -153,7 +154,7 @@ func (db *DB) GetTaskStatus(ctx context.Context, id int64) (string, error) {
 	return status, err
 }
 
-func (db *DB) UpdateTaskStatusRunning(ctx context.Context, id int64) error {
+func (db *DB) updateTaskStatusRunning(ctx context.Context, id int64) error {
 	_, err := db.pool.Exec(ctx, updateTaskStatusSucceededOrRunningQuery, "running", id)
 	return err
 }
@@ -168,7 +169,7 @@ func (db *DB) UpdateTaskStatusFailed(ctx context.Context, id int64, lastError st
 	return err
 }
 
-func (db *DB) StoreTaskEvent(ctx context.Context, event tasks.Event) error {
+func (db *DB) storeTaskEvent(ctx context.Context, event tasks.Event) error {
 	_, err := db.pool.Exec(ctx, storeTaskEventQuery, event.TaskID, event.Status)
 	return err
 }

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"dns/internal/tasks"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+
+	"dns/internal/tasks"
 )
 
 func TestStoreTaskAndGetTask(t *testing.T) {
@@ -30,7 +31,7 @@ func TestStoreTaskAndGetTask(t *testing.T) {
 	id, err := db.StoreTask(ctx, task)
 	require.NoError(t, err)
 
-	got, err := db.GetTask(ctx, id)
+	got, err := db.getTask(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, task.Name, got.Name)
 	require.Equal(t, task.Type, got.Type)
@@ -55,7 +56,7 @@ func TestUpdateAndGetTaskStatus(t *testing.T) {
 	id, err := db.StoreTask(ctx, task)
 	require.NoError(t, err)
 
-	err = db.UpdateTaskStatusRunning(ctx, id)
+	err = db.updateTaskStatusRunning(ctx, id)
 	require.NoError(t, err)
 	status, err := db.GetTaskStatus(ctx, id)
 	require.NoError(t, err)
@@ -103,7 +104,7 @@ func TestStoreAndGetTaskEvents(t *testing.T) {
 			TaskID: id,
 			Status: "running",
 		}
-		err := db.StoreTaskEvent(ctx, event)
+		err := db.storeTaskEvent(ctx, event)
 		require.NoError(t, err)
 	}
 
@@ -207,7 +208,7 @@ func TestReaperUpdateStatusQueued(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 10, len(affectedIDs))
 
-	task, err := db.GetTask(ctx, affectedIDs[0])
+	task, err := db.getTask(ctx, affectedIDs[0])
 	require.NoError(t, err)
 
 	require.Equal(t, "queued", task.Status)
@@ -264,7 +265,7 @@ func TestReaperUpdateStatusFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 10, len(affectedIDs))
 
-	task, err := db.GetTask(ctx, affectedIDs[0])
+	task, err := db.getTask(ctx, affectedIDs[0])
 	require.NoError(t, err)
 
 	require.Equal(t, "failed", task.Status)
