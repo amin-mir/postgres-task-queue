@@ -102,45 +102,39 @@ FROM reaped
 RETURNING task_id`
 )
 
-type DB struct {
+type pg struct {
 	pool *pgxpool.Pool
 }
 
-func New(pool *pgxpool.Pool) *DB {
-	return &DB{pool: pool}
+func New(pool *pgxpool.Pool) *pg {
+	return &pg{pool: pool}
 }
 
-type StoreTaskReq struct {
-	Name    string
-	Type    string
-	Payload map[string]string
-}
-
-func (db *DB) insertTask(ctx context.Context, task tasks.Task) (int64, error) {
+func (pg *pg) insertTask(ctx context.Context, task tasks.Task) (int64, error) {
 	b, err := json.Marshal(task.Payload)
 	if err != nil {
 		return 0, err
 	}
 
 	var id int64
-	err = db.pool.QueryRow(ctx, insertTaskQuery, task.Name, task.Type, task.Status,
+	err = pg.pool.QueryRow(ctx, insertTaskQuery, task.Name, task.Type, task.Status,
 		b, task.CreatedAt, task.UpdatedAt, task.Attempts, task.LockedAt, task.LastError).Scan(&id)
 	return id, err
 }
 
-func (db *DB) StoreTask(ctx context.Context, task StoreTaskReq) (int64, error) {
+func (pg *pg) StoreTask(ctx context.Context, task tasks.StoreTaskReq) (int64, error) {
 	b, err := json.Marshal(task.Payload)
 	if err != nil {
 		return 0, err
 	}
 
 	var id int64
-	err = db.pool.QueryRow(ctx, storeTaskQuery, task.Name, task.Type, b).Scan(&id)
+	err = pg.pool.QueryRow(ctx, storeTaskQuery, task.Name, task.Type, b).Scan(&id)
 	return id, err
 }
 
-func (db *DB) getTask(ctx context.Context, id int64) (tasks.Task, error) {
-	rows, err := db.pool.Query(ctx, getTaskQuery, id)
+func (pg *pg) getTask(ctx context.Context, id int64) (tasks.Task, error) {
+	rows, err := pg.pool.Query(ctx, getTaskQuery, id)
 	if err != nil {
 		return tasks.Task{}, err
 	}
@@ -148,34 +142,34 @@ func (db *DB) getTask(ctx context.Context, id int64) (tasks.Task, error) {
 	return pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[tasks.Task])
 }
 
-func (db *DB) GetTaskStatus(ctx context.Context, id int64) (string, error) {
+func (pg *pg) GetTaskStatus(ctx context.Context, id int64) (string, error) {
 	var status string
-	err := db.pool.QueryRow(ctx, getTaskStatusQuery, id).Scan(&status)
+	err := pg.pool.QueryRow(ctx, getTaskStatusQuery, id).Scan(&status)
 	return status, err
 }
 
-func (db *DB) updateTaskStatusRunning(ctx context.Context, id int64) error {
-	_, err := db.pool.Exec(ctx, updateTaskStatusSucceededOrRunningQuery, "running", id)
+func (pg *pg) updateTaskStatusRunning(ctx context.Context, id int64) error {
+	_, err := pg.pool.Exec(ctx, updateTaskStatusSucceededOrRunningQuery, "running", id)
 	return err
 }
 
-func (db *DB) UpdateTaskStatusSucceeded(ctx context.Context, id int64) error {
-	_, err := db.pool.Exec(ctx, updateTaskStatusSucceededOrRunningQuery, "succeeded", id)
+func (pg *pg) UpdateTaskStatusSucceeded(ctx context.Context, id int64) error {
+	_, err := pg.pool.Exec(ctx, updateTaskStatusSucceededOrRunningQuery, "succeeded", id)
 	return err
 }
 
-func (db *DB) UpdateTaskStatusFailed(ctx context.Context, id int64, lastError string) error {
-	_, err := db.pool.Exec(ctx, updateTaskStatusFailedQuery, lastError, id)
+func (pg *pg) UpdateTaskStatusFailed(ctx context.Context, id int64, lastError string) error {
+	_, err := pg.pool.Exec(ctx, updateTaskStatusFailedQuery, lastError, id)
 	return err
 }
 
-func (db *DB) storeTaskEvent(ctx context.Context, event tasks.Event) error {
-	_, err := db.pool.Exec(ctx, storeTaskEventQuery, event.TaskID, event.Status)
+func (pg *pg) storeTaskEvent(ctx context.Context, event tasks.Event) error {
+	_, err := pg.pool.Exec(ctx, storeTaskEventQuery, event.TaskID, event.Status)
 	return err
 }
 
-func (db *DB) GetTaskEvents(ctx context.Context, taskID int64) ([]tasks.Event, error) {
-	rows, err := db.pool.Query(ctx, getTaskEventsQuery, taskID)
+func (pg *pg) GetTaskEvents(ctx context.Context, taskID int64) ([]tasks.Event, error) {
+	rows, err := pg.pool.Query(ctx, getTaskEventsQuery, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -183,8 +177,8 @@ func (db *DB) GetTaskEvents(ctx context.Context, taskID int64) ([]tasks.Event, e
 	return pgx.CollectRows(rows, pgx.RowToStructByName[tasks.Event])
 }
 
-func (db *DB) DequeueTasks(ctx context.Context, batchSize int) ([]tasks.Task, error) {
-	rows, err := db.pool.Query(ctx, dequeueTasksQuery, batchSize)
+func (pg *pg) DequeueTasks(ctx context.Context, batchSize int) ([]tasks.Task, error) {
+	rows, err := pg.pool.Query(ctx, dequeueTasksQuery, batchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +186,8 @@ func (db *DB) DequeueTasks(ctx context.Context, batchSize int) ([]tasks.Task, er
 	return pgx.CollectRows(rows, pgx.RowToStructByName[tasks.Task])
 }
 
-func (db *DB) ReaperUpdateStatusQueued(ctx context.Context) ([]int64, error) {
-	rows, err := db.pool.Query(ctx, reaperUpdateStatusQueuedQuery)
+func (pg *pg) ReaperUpdateStatusQueued(ctx context.Context) ([]int64, error) {
+	rows, err := pg.pool.Query(ctx, reaperUpdateStatusQueuedQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +195,8 @@ func (db *DB) ReaperUpdateStatusQueued(ctx context.Context) ([]int64, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
-func (db *DB) ReaperUpdateStatusFailed(ctx context.Context) ([]int64, error) {
-	rows, err := db.pool.Query(ctx, reaperUpdateStatusFailedQuery)
+func (pg *pg) ReaperUpdateStatusFailed(ctx context.Context) ([]int64, error) {
+	rows, err := pg.pool.Query(ctx, reaperUpdateStatusFailedQuery)
 	if err != nil {
 		return nil, err
 	}

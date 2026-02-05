@@ -20,7 +20,7 @@ func TestStoreTaskAndGetTask(t *testing.T) {
 
 	db := New(pool)
 
-	task := StoreTaskReq{
+	task := tasks.StoreTaskReq{
 		Name: "task1",
 		Type: "send_email",
 		Payload: map[string]string{
@@ -45,7 +45,7 @@ func TestUpdateAndGetTaskStatus(t *testing.T) {
 
 	db := New(pool)
 
-	task := StoreTaskReq{
+	task := tasks.StoreTaskReq{
 		Name: "task1",
 		Type: "send_email",
 		Payload: map[string]string{
@@ -88,7 +88,7 @@ func TestStoreAndGetTaskEvents(t *testing.T) {
 
 	db := New(pool)
 
-	task := StoreTaskReq{
+	task := tasks.StoreTaskReq{
 		Name: "task1",
 		Type: "send_email",
 		Payload: map[string]string{
@@ -121,7 +121,7 @@ func TestDequeueTask(t *testing.T) {
 
 	var taskIDs []int64
 	for range 10 {
-		task := StoreTaskReq{
+		task := tasks.StoreTaskReq{
 			Name: "some task",
 			Type: "send_email",
 			Payload: map[string]string{
@@ -162,6 +162,10 @@ func TestDequeueTask(t *testing.T) {
 		// Ensure we won't fetch tasks already marked as running.
 		require.NotContains(t, deqTaskIDs, task.ID)
 	}
+
+	tasks, err = db.DequeueTasks(ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(tasks))
 }
 
 func TestReaperUpdateStatusQueued(t *testing.T) {

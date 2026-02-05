@@ -2,7 +2,10 @@ module dns
 
 go 1.25.5
 
-tool github.com/golang-migrate/migrate/v4/cmd/migrate
+tool (
+	github.com/golang-migrate/migrate/v4/cmd/migrate
+	go.uber.org/mock/mockgen
+)
 
 require (
 	cel.dev/expr v0.24.0 // indirect
@@ -180,6 +183,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.40.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.40.0 // indirect
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
+	go.uber.org/mock v0.6.0 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect

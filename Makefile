@@ -50,3 +50,7 @@ migrate-create:
 	@test -n "$(name)" || (echo "Usage: make migrate-create name=your_migration_name" && exit 1)
 	docker run --rm -v $(PWD)/$(MIGRATIONS_DIR):/migrations migrate/migrate:latest \
 		create -ext sql -dir /migrations -seq "$(name)"
+
+.PHONY: gen
+gen:
+	go generate ./...
