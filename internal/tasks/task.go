@@ -10,6 +10,9 @@ const (
 	StatusRunning   = "running"
 	StatusFailed    = "failed"
 	StatusSucceeded = "succeeded"
+
+	TypeSendEmail = "send_email"
+	TypeRunQuery  = "run_query"
 )
 
 type Task struct {

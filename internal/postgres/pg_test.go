@@ -15,6 +15,8 @@ import (
 )
 
 func TestStoreTaskAndGetTask(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 
@@ -40,6 +42,8 @@ func TestStoreTaskAndGetTask(t *testing.T) {
 }
 
 func TestUpdateAndGetTaskStatus(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 
@@ -83,6 +87,8 @@ func TestUpdateAndGetTaskStatus(t *testing.T) {
 }
 
 func TestStoreAndGetTaskEvents(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 
@@ -114,6 +120,8 @@ func TestStoreAndGetTaskEvents(t *testing.T) {
 }
 
 func TestDequeueTask(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 
@@ -169,6 +177,8 @@ func TestDequeueTask(t *testing.T) {
 }
 
 func TestReaperUpdateStatusQueued(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 
@@ -226,6 +236,8 @@ func TestReaperUpdateStatusQueued(t *testing.T) {
 }
 
 func TestReaperUpdateStatusFailed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	pool := runPostgresAndConnect(t, ctx)
 

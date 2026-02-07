@@ -9,11 +9,6 @@ import (
 	"dns/internal/tasks"
 )
 
-const (
-	TaskTypeSendEmail = "send_email"
-	TaskTypeRunQuery  = "run_query"
-)
-
 type Handler struct {
 	db     tasks.DB
 	logger *slog.Logger
@@ -77,7 +72,7 @@ func validateCreateTaskReq(req *tasks.StoreTaskReq) bool {
 		return false
 	}
 
-	if req.Type != TaskTypeSendEmail && req.Type != TaskTypeRunQuery {
+	if req.Type != tasks.TypeSendEmail && req.Type != tasks.TypeRunQuery {
 		return false
 	}
 

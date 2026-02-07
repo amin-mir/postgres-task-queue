@@ -19,7 +19,9 @@ import (
 
 func TestStoreTask(t *testing.T) {
 	type tc struct {
-		name   string
+		name string
+		// Why not tasks.StoreTaskReq directly? To test invalid json
+		// Why not []byte directly? To use the correct *testing.T
 		body   func(t *testing.T) []byte
 		setup  func(*mocks.MockDB)
 		status int
@@ -28,7 +30,7 @@ func TestStoreTask(t *testing.T) {
 
 	validReq := tasks.StoreTaskReq{
 		Name: "test name",
-		Type: TaskTypeSendEmail,
+		Type: tasks.TypeSendEmail,
 		Payload: map[string]string{
 			"arg1": "val1",
 			"arg2": "val2",
