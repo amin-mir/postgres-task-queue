@@ -15,14 +15,13 @@ import (
 )
 
 const (
-	defaultDBTimeout   = time.Second
-	defaultTaskTimeout = 5 * time.Second
-	defaultConcurrency = 100
-
-	defaultTaskSleep           = 3 * time.Second
-	defaultRetryAttempts       = 10
-	defaultGracefulWaitTimeout = 5 * time.Second
-	defaultRunIterationSleep   = time.Second
+	defaultDBTimeout         = time.Second
+	defaultTaskSleep         = 3 * time.Second
+	defaultTaskTimeout       = 5 * time.Second
+	defaultConcurrency       = 100
+	defaultRetryAttempts     = 10
+	defaultRunIterationSleep = time.Second
+	defaultGracefulWait      = 5 * time.Second
 )
 
 var (
@@ -30,9 +29,13 @@ var (
 )
 
 type config struct {
-	DBTimeout   time.Duration
-	TaskTimeout time.Duration
-	Concurrency int
+	DBTimeout         time.Duration
+	TaskSleep         time.Duration
+	TaskTimeout       time.Duration
+	Concurrency       int
+	RetryAttempts     uint
+	RunIterationSleep time.Duration
+	GracefulWait      time.Duration
 }
 
 func (cfg *config) sanitize() {
@@ -41,6 +44,13 @@ func (cfg *config) sanitize() {
 	}
 	if cfg.DBTimeout > 5*time.Second {
 		cfg.DBTimeout = 5 * time.Second
+	}
+
+	if cfg.TaskSleep <= 0 {
+		cfg.TaskSleep = defaultTaskSleep
+	}
+	if cfg.TaskSleep > 10*time.Second {
+		cfg.TaskSleep = 10 * time.Second
 	}
 
 	// 2*DBTimeout <= TaskTimeout <= 20*time.Second
@@ -54,14 +64,22 @@ func (cfg *config) sanitize() {
 	if cfg.Concurrency <= 0 || cfg.Concurrency > 1000 {
 		cfg.Concurrency = defaultConcurrency
 	}
+
+	if cfg.RetryAttempts <= 0 || cfg.RetryAttempts >= 20 {
+		cfg.RetryAttempts = defaultRetryAttempts
+	}
+
+	if cfg.RunIterationSleep <= 0 || cfg.RunIterationSleep > 10*time.Second {
+		cfg.RunIterationSleep = defaultRunIterationSleep
+	}
+
+	if cfg.GracefulWait <= 0 || cfg.GracefulWait > 10*time.Second {
+		cfg.GracefulWait = defaultGracefulWait
+	}
 }
 
 func configFromOpts(opts ...Opt) config {
-	cfg := config{
-		DBTimeout:   defaultDBTimeout,
-		TaskTimeout: defaultTaskTimeout,
-		Concurrency: defaultConcurrency,
-	}
+	cfg := config{}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -75,12 +93,28 @@ func WithDBTimeout(d time.Duration) Opt {
 	return func(cfg *config) { cfg.DBTimeout = d }
 }
 
+func WithTaskSleep(d time.Duration) Opt {
+	return func(cfg *config) { cfg.TaskSleep = d }
+}
+
 func WithTaskTimeout(d time.Duration) Opt {
 	return func(cfg *config) { cfg.TaskTimeout = d }
 }
 
 func WithConcurrency(n int) Opt {
 	return func(cfg *config) { cfg.Concurrency = n }
+}
+
+func WithRetryAttempts(n uint) Opt {
+	return func(cfg *config) { cfg.RetryAttempts = n }
+}
+
+func WithRunIterationSleep(d time.Duration) Opt {
+	return func(cfg *config) { cfg.RunIterationSleep = d }
+}
+
+func WithGracefulWait(d time.Duration) Opt {
+	return func(cfg *config) { cfg.GracefulWait = d }
 }
 
 type Runner struct {
@@ -106,6 +140,9 @@ func New(db tasks.DB, logger *slog.Logger, opts ...Opt) *Runner {
 	}
 }
 
+// Run returns context.Canceled when context is canceled but all the tasks finish
+// within the graceful shutdown period. If there are still pending tasks
+// it will return ErrGracefulShutdownTimeout.
 func (r *Runner) Run(ctx context.Context) error {
 loop:
 	for {
@@ -114,18 +151,22 @@ loop:
 			if ctx.Err() != nil {
 				break
 			}
-			r.logger.ErrorContext(ctx, "DB.DequeueTasks failed", "err", err)
-			time.Sleep(defaultRunIterationSleep)
+			r.logger.ErrorContext(ctx, "dequeueTasks failed", "err", err)
+			time.Sleep(r.cfg.RunIterationSleep)
 			continue
 		}
 
 		if len(tt) == 0 {
-			r.logger.InfoContext(ctx, "DB.DequeueTasks returned 0 tasks")
-			time.Sleep(defaultRunIterationSleep)
+			r.logger.InfoContext(ctx, "dequeueTasks returned 0 tasks")
+			time.Sleep(r.cfg.RunIterationSleep)
 			continue
 		}
 
 		for i := range tt {
+			// another approach is to validate type before acquiring a slot.
+			// if tt[i].Type != tasks.TypeRunQuery && tt[i].Type != tasks.TypeSendEmail {
+			// 	panic(fmt.Sprintf("invalid task type: %s", tt[i].Type))
+			// }
 			if !r.acquire(ctx) {
 				break loop
 			}
@@ -164,18 +205,20 @@ func (r *Runner) wait() error {
 	}()
 
 	select {
-	case <-time.After(defaultGracefulWaitTimeout):
+	case <-time.After(r.cfg.GracefulWait):
 		return ErrGracefulShutdownTimeout
 	case <-done:
-		return nil
+		return context.Canceled
 	}
 }
 
 // runTask will run the given task with the given CONTEXT. The task will be part of
 // Runner's WAITGROUP. It will return the SEMAPHOR back once the task finishes and
 // call the corresponding DB FUNCTION based on the result of the task. The tasks
-// are responsible for respecting the ctx.Done. This will allow the task and DB calls
-// to have separate timeouts by deriving the parent context and using the correct timeout.
+// are responsible for respecting the ctx.Done. We don't derive a new context with timeout
+// in this function as it allows the taskFn and DB calls to have separate timeouts by
+// deriving the context the way they want. Currently taskFn will derive from the parent context
+// but DB calls will use context.Background().
 func (r *Runner) runTask(
 	ctx context.Context,
 	taskFn func(context.Context, *tasks.Task) error,
@@ -185,32 +228,38 @@ func (r *Runner) runTask(
 		defer func() { <-r.sem }()
 
 		if err := taskFn(ctx, task); err != nil {
-			r.taskFailed(ctx, task.ID, err)
+			if err = r.taskFailed(ctx, task.ID, err); err != nil {
+				r.logger.ErrorContext(ctx, "taskFailed failed", "err", err)
+			}
 			return
 		}
 
-		r.taskSucceeded(ctx, task.ID)
+		if err := r.taskSucceeded(ctx, task.ID); err != nil {
+			r.logger.ErrorContext(ctx, "taskSucceeded failed", "err", err)
+		}
 	})
 }
 
+// Handles the task: send_email
 func (r *Runner) sendEmail(ctx context.Context, task *tasks.Task) error {
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.TaskTimeout)
 	defer cancel()
 
 	select {
-	case <-time.After(defaultTaskSleep):
+	case <-time.After(r.cfg.TaskSleep):
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
+// Handles the task: run_query
 func (r *Runner) runQuery(ctx context.Context, task *tasks.Task) error {
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.TaskTimeout)
 	defer cancel()
 
 	select {
-	case <-time.After(defaultTaskSleep):
+	case <-time.After(r.cfg.TaskSleep):
 		// Simulate failure.
 		if rand.Float64() < 0.3 {
 			return errors.New("random error")
@@ -222,11 +271,15 @@ func (r *Runner) runQuery(ctx context.Context, task *tasks.Task) error {
 }
 
 func (r *Runner) dequeueTasks(ctx context.Context) ([]tasks.Task, error) {
-	retrier := newRetrier(ctx)
+	retrier := r.newRetrier(ctx)
 
 	var tt []tasks.Task
 	err := retrier.Do(func() error {
-		// Creating a context with timeout for each request to the database.
+		// Creating a context with timeout for each request to the database. We use the
+		// context passed to this function (as opposed to taskFailed and taskSucceeded)
+		// because when we receive the shutdown signal, we don't want to process tasks anymore.
+		// It is possible that some tasks will be marked as running in the database as a result
+		// of this decision, but that is fine because the reaper will later mark them as queued.
 		ctx, cancel := context.WithTimeout(ctx, r.cfg.DBTimeout)
 		defer cancel()
 
@@ -242,43 +295,41 @@ func (r *Runner) dequeueTasks(ctx context.Context) ([]tasks.Task, error) {
 	return tt, err
 }
 
-func (r *Runner) taskFailed(ctx context.Context, id int64, lastError error) {
-	retrier := newRetrier(ctx)
+func (r *Runner) taskFailed(ctx context.Context, id int64, lastError error) error {
+	retrier := r.newRetrier(ctx)
 
-	retrier.Do(func() error {
-		// Creating a context with timeout for each request to the database.
-		ctx, cancel := context.WithTimeout(ctx, r.cfg.DBTimeout)
-		defer cancel()
+	return retrier.Do(func() error {
+		// Creating an independent context with timeout for each request to the database
+		// so that even when the parent context is canceled (shutdown signal), the correct
+		// DB operation will continue. These requests won't be retired however as we're
+		// using the passed context for that.
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), r.cfg.DBTimeout)
+		defer dbCancel()
 
-		if err := r.db.UpdateTaskStatusFailed(ctx, id, lastError.Error()); err != nil {
-			r.logger.ErrorContext(ctx, "DB.UpdateTaskStatusFailed failed", "err", err)
-			return err
-		}
-		return nil
+		return r.db.UpdateTaskStatusFailed(dbCtx, id, lastError.Error())
 	})
 }
 
-func (r *Runner) taskSucceeded(ctx context.Context, id int64) {
-	retrier := newRetrier(ctx)
+func (r *Runner) taskSucceeded(ctx context.Context, id int64) error {
+	retrier := r.newRetrier(ctx)
 
-	retrier.Do(func() error {
-		// Creating a context with timeout for each request to the database.
-		ctx, cancel := context.WithTimeout(ctx, r.cfg.DBTimeout)
-		defer cancel()
+	return retrier.Do(func() error {
+		// Creating an independent context with timeout for each request to the database
+		// so that even when the parent context is canceled (shutdown signal), the correct
+		// DB operation will continue. These requests won't be retired however as we're
+		// using the passed context for that.
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), r.cfg.DBTimeout)
+		defer dbCancel()
 
-		if err := r.db.UpdateTaskStatusSucceeded(ctx, id); err != nil {
-			r.logger.ErrorContext(ctx, "DB.UpdateTaskStatusSucceeded failed", "err", err)
-			return err
-		}
-		return nil
+		return r.db.UpdateTaskStatusSucceeded(dbCtx, id)
 	})
 }
 
-func newRetrier(ctx context.Context) *retry.Retrier {
+func (r *Runner) newRetrier(ctx context.Context) *retry.Retrier {
 	// No need to set a timeout for the retry context as we're specifying the
 	// total number of reties.
 	return retry.New(
 		retry.Context(ctx),
-		retry.Attempts(defaultRetryAttempts),
+		retry.Attempts(r.cfg.RetryAttempts),
 	)
 }
