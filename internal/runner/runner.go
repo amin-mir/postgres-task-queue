@@ -327,7 +327,7 @@ func (r *Runner) taskSucceeded(ctx context.Context, id int64) error {
 
 func (r *Runner) newRetrier(ctx context.Context) *retry.Retrier {
 	// No need to set a timeout for the retry context as we're specifying the
-	// total number of reties.
+	// total number of retries.
 	return retry.New(
 		retry.Context(ctx),
 		retry.Attempts(r.cfg.RetryAttempts),
