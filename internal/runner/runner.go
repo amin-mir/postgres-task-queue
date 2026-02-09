@@ -53,12 +53,12 @@ func (cfg *config) sanitize() {
 		cfg.TaskSleep = 10 * time.Second
 	}
 
-	// 2*DBTimeout <= TaskTimeout <= 20*time.Second
+	// 2*DBTimeout & TaskSleep <= TaskTimeout <= 20*time.Second
 	if cfg.TaskTimeout > 20*time.Second {
-		cfg.DBTimeout = 20 * time.Second
+		cfg.TaskTimeout = 20 * time.Second
 	}
 	if cfg.TaskTimeout < 2*cfg.DBTimeout {
-		cfg.TaskTimeout = 2 * cfg.DBTimeout
+		cfg.TaskTimeout = 2*cfg.DBTimeout + cfg.TaskSleep
 	}
 
 	if cfg.Concurrency <= 0 || cfg.Concurrency > 1000 {
@@ -157,10 +157,10 @@ loop:
 		}
 
 		if len(tt) == 0 {
-			r.logger.InfoContext(ctx, "dequeueTasks returned 0 tasks")
 			time.Sleep(r.cfg.RunIterationSleep)
 			continue
 		}
+		r.logger.InfoContext(ctx, "dequeued tasks to run", "num", len(tt))
 
 		for i := range tt {
 			// another approach is to validate type before acquiring a slot.
