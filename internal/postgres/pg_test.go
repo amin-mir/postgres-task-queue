@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"dns/internal/tasks"
 )
 
-func TestStoreTaskAndGetTask(t *testing.T) {
+func TestStoreTaskInsertsTaskAndEvent(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -39,6 +40,10 @@ func TestStoreTaskAndGetTask(t *testing.T) {
 	require.Equal(t, task.Type, got.Type)
 	require.Equal(t, task.Payload, got.Payload)
 	require.Equal(t, tasks.StatusQueued, got.Status)
+
+	events, err := db.GetTaskEvents(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "queued", events[0].Status)
 }
 
 func TestUpdateAndGetTaskStatus(t *testing.T) {
@@ -174,6 +179,53 @@ func TestDequeueTask(t *testing.T) {
 	tasks, err = db.DequeueTasks(ctx, 4)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tasks))
+}
+
+func TestDequeueTaskInsertsIntoTaskEvents(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	pool := runPostgresAndConnect(t, ctx)
+
+	db := New(pool)
+
+	var taskIDs []int64
+	for range 10 {
+		task := tasks.StoreTaskReq{
+			Name: "some task",
+			Type: "send_email",
+			Payload: map[string]string{
+				"param1": "val1",
+				"param2": "val2",
+			},
+		}
+		id, err := db.StoreTask(ctx, task)
+		require.NoError(t, err)
+		taskIDs = append(taskIDs, id)
+	}
+
+	deqTasks, err := db.DequeueTasks(ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(deqTasks))
+
+	for _, task := range deqTasks {
+		events, err := db.GetTaskEvents(ctx, task.ID)
+		require.NoError(t, err)
+		require.Equal(t, 2, len(events))
+		require.Equal(t, "queued", events[0].Status)
+		require.Equal(t, "running", events[1].Status)
+	}
+
+	for _, id := range taskIDs {
+		dequeued := slices.ContainsFunc(deqTasks, func(t tasks.Task) bool { return id == t.ID })
+		if dequeued {
+			continue
+		}
+		events, err := db.GetTaskEvents(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(events))
+		require.Equal(t, "queued", events[0].Status)
+	}
 }
 
 func TestReaperUpdateStatusQueued(t *testing.T) {

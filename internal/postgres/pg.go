@@ -15,7 +15,15 @@ const (
 (name, type, status, payload, created_at, updated_at, attempts, locked_at, last_error)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
 
-	storeTaskQuery = "INSERT INTO tasks (name, type, payload) VALUES ($1, $2, $3) RETURNING id"
+	storeTaskQuery = `WITH inserted AS (
+	INSERT INTO tasks (name, type, payload)
+	VALUES ($1, $2, $3)
+	RETURNING id, status
+)
+INSERT INTO task_events (task_id, status)
+SELECT id, status
+FROM inserted
+RETURNING task_id`
 
 	getTaskQuery = `SELECT id, name, type, status, payload, created_at, updated_at, attempts, locked_at, last_error
 FROM tasks
@@ -31,8 +39,7 @@ WHERE id = $1`
 )
 INSERT INTO task_events (task_id, status, created_at)
 SELECT id, status, updated_at
-FROM updated
-`
+FROM updated`
 
 	updateTaskStatusFailedQuery = `WITH updated AS (
 	UPDATE tasks
@@ -42,8 +49,7 @@ FROM updated
 )
 INSERT INTO task_events (task_id, status, created_at)
 SELECT id, status, updated_at
-FROM updated
-`
+FROM updated`
 
 	storeTaskEventQuery = `INSERT INTO task_events (task_id, status) VALUES ($1, $2)`
 
@@ -53,21 +59,31 @@ WHERE task_id = $1
 ORDER BY created_at
 LIMIT 10`
 
-	dequeueTasksQuery = `WITH next AS (
-SELECT id
-FROM tasks
-WHERE status = 'queued' AND locked_at IS NULL
-ORDER BY created_at, id
-LIMIT $1
-FOR UPDATE SKIP LOCKED
+	dequeueTasksQuery = `WITH ts AS (select now() AS ts),
+next AS (
+	SELECT id
+	FROM tasks
+	WHERE status = 'queued' AND locked_at IS NULL
+	ORDER BY created_at, id
+	LIMIT $1
+	FOR UPDATE SKIP LOCKED
+),
+updated AS (
+	UPDATE tasks t
+	SET status = 'running',
+		updated_at = ts.ts,
+		locked_at = ts.ts
+	FROM next, ts
+	WHERE t.id = next.id
+	RETURNING t.*
+),
+events AS (
+	INSERT INTO task_events (task_id, status, created_at)
+	SELECT id, status, updated_at
+	FROM updated
 )
-UPDATE tasks t
-SET status = 'running',
-	locked_at = now(),
-	updated_at = now()
-FROM next
-WHERE t.id = next.id
-RETURNING t.*;`
+SELECT *
+FROM updated`
 
 	reaperUpdateStatusQueuedQuery = `WITH reaped AS (
 	UPDATE tasks
