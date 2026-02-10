@@ -85,10 +85,11 @@ func TestUpdateAndGetTaskStatus(t *testing.T) {
 
 	events, err := db.GetTaskEvents(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, 3, len(events))
-	require.Equal(t, "running", events[0].Status)
-	require.Equal(t, "failed", events[1].Status)
-	require.Equal(t, "succeeded", events[2].Status)
+	require.Equal(t, 4, len(events))
+	require.Equal(t, "queued", events[0].Status)
+	require.Equal(t, "running", events[1].Status)
+	require.Equal(t, "failed", events[2].Status)
+	require.Equal(t, "succeeded", events[3].Status)
 }
 
 func TestStoreAndGetTaskEvents(t *testing.T) {
@@ -121,7 +122,7 @@ func TestStoreAndGetTaskEvents(t *testing.T) {
 
 	events, err := db.GetTaskEvents(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, 5, len(events))
+	require.Equal(t, 6, len(events))
 }
 
 func TestDequeueTask(t *testing.T) {
